@@ -25,6 +25,9 @@ export const LoginEmpresa = () => {
             setApiResponse(data)
 
             if (response.ok) {
+                localStorage.setItem('empresa_slug', data.slug);
+                localStorage.setItem('empresa_nombre', data.nombre);
+                localStorage.setItem('empresa_id', data.empresa_id);
                 navigate(`/${data.slug}/login`)
             } else {
                 setError(data?.message || data?.detail || 'Empresa no encontrada. Verifica el identificador.')
