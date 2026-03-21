@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { useAuth } from './Useauth'
+import { useAuth } from './useAuth'
 import { useBranding } from './useBranding'
 import type { Branding } from './useBranding'
 import { Personalizacion } from './Personalizacion'
+import RolesPanel from './Rolespanel'
 
 // ─── Mock data (Panel Principal) ──────────────────────────────────────────────
 
@@ -25,35 +26,64 @@ const INITIALS_COLORS: Record<string,{bg:string;text:string}> = {
   emerald:{bg:'#d1fae5',text:'#059669'},
 }
 
-// ─── Nav structure ────────────────────────────────────────────────────────────
+// ─── Nav types ─────────────────────────────────────────────────────────────────
 
-type NavKey = 'empresa' | 'empresa/info' | 'empresa/usuarios' | 'empresa/facturacion' | 'empresa/personalizacion' | 'dashboard' | 'inventario' | 'contratos' | 'facturacion' | 'reportes'
+type NavKey =
+  | 'empresa'
+  | 'empresa/info'
+  | 'empresa/usuarios'
+  | 'empresa/facturacion'
+  | 'empresa/personalizacion'
+  | 'empresa/roles'           // <-- NUEVO
+  | 'dashboard'
+  | 'inventario'
+  | 'contratos'
+  | 'facturacion'
+  | 'reportes'
 
-interface NavItem {
-  key:      NavKey
-  icon:     string
-  label:    string
-  children?: { key: NavKey; icon: string; label: string; tag?: string }[]
+interface NavChild {
+  key:   NavKey
+  icon:  string
+  label: string
+  tag?:  string
+  /** Si está definido, solo estos roles ven este ítem */
+  roles?: string[]
 }
 
+interface NavItem {
+  key:       NavKey
+  icon:      string
+  label:     string
+  /** Si está definido, solo estos roles ven este ítem */
+  roles?:    string[]
+  children?: NavChild[]
+}
+
+// ─── Definición del nav con control de roles ──────────────────────────────────
+//
+//  • roles: ['Administrador']  → solo admins lo ven
+//  • sin roles                 → todos lo ven
+//
 const NAV_ITEMS: NavItem[] = [
   {
     key: 'empresa', icon: 'business', label: 'Empresa',
     children: [
-      { key: 'empresa/info',           icon: 'info',            label: 'Información general' },
-      { key: 'empresa/usuarios',        icon: 'group',           label: 'Usuarios y roles' },
-      { key: 'empresa/facturacion',     icon: 'credit_card',     label: 'Facturación y plan' },
-      { key: 'empresa/personalizacion', icon: 'palette',         label: 'Personalización', tag: 'Nuevo' },
+      { key: 'empresa/info',            icon: 'info',        label: 'Información general' },
+      { key: 'empresa/usuarios',        icon: 'group',       label: 'Usuarios y roles' },
+      { key: 'empresa/facturacion',     icon: 'credit_card', label: 'Facturación y plan' },
+      { key: 'empresa/personalizacion', icon: 'palette',     label: 'Personalización', tag: 'Nuevo' },
+      // Solo admins ven "Control de Roles"
+      { key: 'empresa/roles',           icon: 'shield',      label: 'Control de Roles', roles: ['Administrador'] },
     ],
   },
-  { key: 'dashboard',   icon: 'grid_view',   label: 'Panel Principal' },
+  { key: 'dashboard',   icon: 'grid_view',    label: 'Panel Principal' },
   { key: 'inventario',  icon: 'inventory_2',  label: 'Inventario' },
   { key: 'contratos',   icon: 'description',  label: 'Contratos' },
   { key: 'facturacion', icon: 'receipt_long', label: 'Facturación' },
-  { key: 'reportes',    icon: 'bar_chart',    label: 'Reportes' },
+  { key: 'reportes',    icon: 'bar_chart',    label: 'Reportes', roles: ['Administrador'] },
 ]
 
-// ─── Skeleton ─────────────────────────────────────────────────────────────────
+// ─── Skeleton ──────────────────────────────────────────────────────────────────
 
 const DashboardSkeleton = () => (
   <div style={{display:'flex',height:'100vh',overflow:'hidden',background:'#f8f9fc'}}>
@@ -73,15 +103,12 @@ const DashboardSkeleton = () => (
         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'1.25rem'}}>
           {[1,2,3,4].map(i=><div key={i} className="sk" style={{height:130,borderRadius:18}}/>)}
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 360px',gap:'1.25rem'}}>
-          <div className="sk" style={{height:280,borderRadius:18}}/><div className="sk" style={{height:280,borderRadius:18}}/>
-        </div>
       </div>
     </div>
   </div>
 )
 
-// ─── Placeholder pages ────────────────────────────────────────────────────────
+// ─── Placeholder ───────────────────────────────────────────────────────────────
 
 const PlaceholderPage = ({ title, icon }: { title: string; icon: string }) => (
   <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:'1rem',color:'#94a3b8',paddingTop:'4rem',animation:'pzIn .3s ease'}}>
@@ -92,32 +119,38 @@ const PlaceholderPage = ({ title, icon }: { title: string; icon: string }) => (
   </div>
 )
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── Pantalla de acceso denegado ───────────────────────────────────────────────
+
+const AccesoDenegado = () => (
+  <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:'1rem',color:'#94a3b8',paddingTop:'4rem',animation:'pzIn .3s ease'}}>
+    <span className="material-symbols-outlined" style={{fontSize:52,opacity:.35,color:'#f87171'}}>lock</span>
+    <p style={{fontWeight:700,fontSize:'1.1rem',color:'#334155'}}>Acceso restringido</p>
+    <p style={{fontSize:'.85rem'}}>No tienes permisos para ver esta sección.</p>
+  </div>
+)
+
+// ─── Main component ────────────────────────────────────────────────────────────
 
 export const Dashboard = () => {
   const { slug } = useParams<{ slug: string }>()
-  const { userName, logout } = useAuth()
+  const { userName, userRolNombre, hasRol, logout } = useAuth()
   const { branding: initialBranding, loading: brandingLoading } = useBranding(slug)
 
-  // Branding local — se actualiza sin refetch cuando el usuario guarda cambios
-  const [branding, setBranding] = useState<Branding | null>(null)
+  const [branding,    setBranding]    = useState<Branding | null>(null)
+  const [activeNav,   setActiveNav]   = useState<NavKey>('dashboard')
+  const [empresaOpen, setEmpresaOpen] = useState(false)
+  const [logoutState, setLogoutState] = useState<'idle'|'loading'>('idle')
+
+  const empresaRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!brandingLoading && initialBranding) setBranding(initialBranding)
   }, [brandingLoading, initialBranding])
 
-  const [activeNav,    setActiveNav]    = useState<NavKey>('dashboard')
-  const [empresaOpen,  setEmpresaOpen]  = useState(false)
-  const [logoutState,  setLogoutState]  = useState<'idle'|'loading'>('idle')
-
-  const empresaRef = useRef<HTMLDivElement>(null)
-
-  // Cerrar desplegable al hacer click fuera
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (empresaRef.current && !empresaRef.current.contains(e.target as Node)) {
+      if (empresaRef.current && !empresaRef.current.contains(e.target as Node))
         setEmpresaOpen(false)
-      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -125,37 +158,44 @@ export const Dashboard = () => {
 
   if (brandingLoading || !branding) return <DashboardSkeleton />
 
+  const puedeVer = (roles?: string[]): boolean => {
+    if (!roles || roles.length === 0) return true
+    const result = roles.some(r => hasRol(r))
+    console.log('puedeVer', roles, '→', result, '| userRolNombre:', userRolNombre)
+    return result
+  }
+  
+
   const handleLogout = async () => {
     setLogoutState('loading')
     await logout(slug)
   }
 
   const handleNavClick = (key: NavKey, hasChildren?: boolean) => {
-    if (hasChildren) {
-      setEmpresaOpen(prev => !prev)
-      return
-    }
+    if (hasChildren) { setEmpresaOpen(prev => !prev); return }
     setActiveNav(key)
     if (!key.startsWith('empresa')) setEmpresaOpen(false)
   }
 
-  const handleBrandingUpdated = (
-    newColors: Branding['colors'],
-    newLogoUrl: string
-  ) => {
+  const handleBrandingUpdated = (newColors: Branding['colors'], newLogoUrl: string) => {
     setBranding(prev => prev ? { ...prev, logo: newLogoUrl, colors: newColors } : prev)
   }
+
+  /**
+   * Dado un array de roles permitidos (o ninguno), devuelve si el usuario actual
+   * puede ver ese ítem. Si no hay roles definidos → visible para todos.
+   */
 
   const { primary, secondary, tertiary, quaternary } = branding.colors
 
   const cssVars = {
-    '--c-primary':      primary,
-    '--c-secondary':    secondary,
-    '--c-tertiary':     tertiary,
-    '--c-sidebar':      quaternary,
-    '--c-primary-10':   `color-mix(in srgb, ${primary} 10%, transparent)`,
-    '--c-primary-20':   `color-mix(in srgb, ${primary} 20%, transparent)`,
-    '--c-primary-30':   `color-mix(in srgb, ${primary} 30%, transparent)`,
+    '--c-primary':    primary,
+    '--c-secondary':  secondary,
+    '--c-tertiary':   tertiary,
+    '--c-sidebar':    quaternary,
+    '--c-primary-10': `color-mix(in srgb, ${primary} 10%, transparent)`,
+    '--c-primary-20': `color-mix(in srgb, ${primary} 20%, transparent)`,
+    '--c-primary-30': `color-mix(in srgb, ${primary} 30%, transparent)`,
   } as React.CSSProperties
 
   const isEmpresaActive = activeNav.startsWith('empresa')
@@ -166,94 +206,64 @@ export const Dashboard = () => {
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@400,0&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-
-        .db-root { display:flex; height:100vh; overflow:hidden; font-family:'Plus Jakarta Sans',sans-serif; background:#f8f9fc; color:#1e293b; animation:dbFadeIn .3s ease; }
+        .db-root{display:flex;height:100vh;overflow:hidden;font-family:'Plus Jakarta Sans',sans-serif;background:#f8f9fc;color:#1e293b;animation:dbFadeIn .3s ease;}
         @keyframes dbFadeIn{from{opacity:0}to{opacity:1}}
-
-        /* ══ SIDEBAR ══ */
-        .db-sidebar { width:272px; background:var(--c-sidebar); display:flex; flex-direction:column; flex-shrink:0; }
-        .db-sidebar__brand { padding:1.75rem 1.5rem 1.25rem; display:flex; align-items:center; gap:.875rem; border-bottom:1px solid rgba(255,255,255,.06); }
-        .db-sidebar__brand-icon { background:var(--c-primary); padding:.45rem; border-radius:12px; box-shadow:0 4px 14px var(--c-primary-30); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-        .db-sidebar__brand-icon img { width:28px; height:28px; object-fit:contain; border-radius:6px; }
-        .db-sidebar__brand-name { color:#fff; font-size:1.15rem; font-weight:700; letter-spacing:-.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-        .db-sidebar__nav { flex:1; padding:1.25rem 1rem; display:flex; flex-direction:column; gap:.15rem; overflow-y:auto; }
+        .db-sidebar{width:272px;background:var(--c-sidebar);display:flex;flex-direction:column;flex-shrink:0;}
+        .db-sidebar__brand{padding:1.75rem 1.5rem 1.25rem;display:flex;align-items:center;gap:.875rem;border-bottom:1px solid rgba(255,255,255,.06);}
+        .db-sidebar__brand-icon{background:var(--c-primary);padding:.45rem;border-radius:12px;box-shadow:0 4px 14px var(--c-primary-30);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+        .db-sidebar__brand-icon img{width:28px;height:28px;object-fit:contain;border-radius:6px;}
+        .db-sidebar__brand-name{color:#fff;font-size:1.15rem;font-weight:700;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .db-sidebar__nav{flex:1;padding:1.25rem 1rem;display:flex;flex-direction:column;gap:.15rem;overflow-y:auto;}
         .db-sidebar__nav::-webkit-scrollbar{display:none;}
-
-        /* ── Nav items base ── */
-        .db-nav-item { display:flex; align-items:center; gap:.875rem; padding:.8rem 1rem; border-radius:12px; cursor:pointer; color:rgba(255,255,255,.45); font-size:.875rem; font-weight:500; transition:background .15s, color .15s; border:none; background:transparent; width:100%; text-align:left; }
-        .db-nav-item .material-symbols-outlined { font-size:21px; flex-shrink:0; }
-        .db-nav-item:hover { background:rgba(255,255,255,.07); color:rgba(255,255,255,.85); }
-        .db-nav-item--active { background:rgba(255,255,255,.11) !important; color:#fff !important; font-weight:600; }
-        .db-nav-item--active .db-nav-item__icon { color:var(--c-primary); }
-        .db-nav-item--empresa-open { background:rgba(255,255,255,.07); color:rgba(255,255,255,.85); }
-
-        .db-nav-item__chevron { margin-left:auto; font-size:17px !important; transition:transform .2s; opacity:.6; }
-        .db-nav-item__chevron--open { transform:rotate(180deg); }
-
-        /* ── Empresa submenu ── */
-        .db-submenu {
-          overflow:hidden; max-height:0;
-          transition:max-height .28s cubic-bezier(.4,0,.2,1), opacity .2s ease;
-          opacity:0;
-        }
-        .db-submenu--open { max-height:300px; opacity:1; }
-
-        .db-submenu-inner { display:flex; flex-direction:column; gap:.1rem; padding:.25rem 0 .5rem .75rem; }
-
-        .db-sub-item {
-          display:flex; align-items:center; gap:.7rem;
-          padding:.65rem .875rem; border-radius:10px;
-          cursor:pointer; color:rgba(255,255,255,.38); font-size:.825rem; font-weight:500;
-          transition:background .15s, color .15s; border:none; background:transparent; width:100%; text-align:left;
-        }
-        .db-sub-item .material-symbols-outlined { font-size:17px; flex-shrink:0; }
-        .db-sub-item:hover { background:rgba(255,255,255,.06); color:rgba(255,255,255,.75); }
-        .db-sub-item--active { background:rgba(255,255,255,.09) !important; color:#fff !important; font-weight:600; }
-        .db-sub-item--active .material-symbols-outlined { color:var(--c-primary); }
-
-        .db-sub-item__tag { margin-left:auto; font-size:.6rem; font-weight:800; padding:.15rem .45rem; border-radius:99px; background:var(--c-primary); color:#fff; letter-spacing:.04em; text-transform:uppercase; }
-
-        /* ── Sidebar footer ── */
-        .db-sidebar__footer { padding:1rem; border-top:1px solid rgba(255,255,255,.06); }
-        .db-user-card { display:flex; align-items:center; gap:.75rem; padding:.875rem; background:rgba(255,255,255,.07); border-radius:14px; }
-        .db-user-card__avatar { width:36px; height:36px; border-radius:50%; border:2px solid color-mix(in srgb, var(--c-primary) 50%, transparent); flex-shrink:0; background:#1e293b; display:flex; align-items:center; justify-content:center; }
-        .db-user-card__name { color:#fff; font-size:.85rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:110px; }
-        .db-user-card__role { color:rgba(255,255,255,.4); font-size:.72rem; }
-        .db-logout-btn { margin-left:auto; background:none; border:none; cursor:pointer; color:rgba(255,255,255,.35); display:flex; align-items:center; transition:color .15s, background .15s; flex-shrink:0; padding:.3rem; border-radius:8px; }
-        .db-logout-btn:hover:not(:disabled) { color:#f87171; background:rgba(248,113,113,.1); }
-        .db-logout-btn:disabled { opacity:.5; cursor:not-allowed; }
-        .db-logout-btn .material-symbols-outlined { font-size:19px; }
-        .db-logout-spinner { width:16px; height:16px; border:2px solid rgba(255,255,255,.2); border-top-color:rgba(255,255,255,.7); border-radius:50%; animation:spin .7s linear infinite; }
+        .db-nav-item{display:flex;align-items:center;gap:.875rem;padding:.8rem 1rem;border-radius:12px;cursor:pointer;color:rgba(255,255,255,.45);font-size:.875rem;font-weight:500;transition:background .15s,color .15s;border:none;background:transparent;width:100%;text-align:left;}
+        .db-nav-item .material-symbols-outlined{font-size:21px;flex-shrink:0;}
+        .db-nav-item:hover{background:rgba(255,255,255,.07);color:rgba(255,255,255,.85);}
+        .db-nav-item--active{background:rgba(255,255,255,.11)!important;color:#fff!important;font-weight:600;}
+        .db-nav-item--active .db-nav-item__icon{color:var(--c-primary);}
+        .db-nav-item--empresa-open{background:rgba(255,255,255,.07);color:rgba(255,255,255,.85);}
+        .db-nav-item__chevron{margin-left:auto;font-size:17px!important;transition:transform .2s;opacity:.6;}
+        .db-nav-item__chevron--open{transform:rotate(180deg);}
+        .db-submenu{overflow:hidden;max-height:0;transition:max-height .28s cubic-bezier(.4,0,.2,1),opacity .2s ease;opacity:0;}
+        .db-submenu--open{max-height:400px;opacity:1;}
+        .db-submenu-inner{display:flex;flex-direction:column;gap:.1rem;padding:.25rem 0 .5rem .75rem;}
+        .db-sub-item{display:flex;align-items:center;gap:.7rem;padding:.65rem .875rem;border-radius:10px;cursor:pointer;color:rgba(255,255,255,.38);font-size:.825rem;font-weight:500;transition:background .15s,color .15s;border:none;background:transparent;width:100%;text-align:left;}
+        .db-sub-item .material-symbols-outlined{font-size:17px;flex-shrink:0;}
+        .db-sub-item:hover{background:rgba(255,255,255,.06);color:rgba(255,255,255,.75);}
+        .db-sub-item--active{background:rgba(255,255,255,.09)!important;color:#fff!important;font-weight:600;}
+        .db-sub-item--active .material-symbols-outlined{color:var(--c-primary);}
+        .db-sub-item__tag{margin-left:auto;font-size:.6rem;font-weight:800;padding:.15rem .45rem;border-radius:99px;background:var(--c-primary);color:#fff;letter-spacing:.04em;text-transform:uppercase;}
+        .db-sidebar__footer{padding:1rem;border-top:1px solid rgba(255,255,255,.06);}
+        .db-user-card{display:flex;align-items:center;gap:.75rem;padding:.875rem;background:rgba(255,255,255,.07);border-radius:14px;}
+        .db-user-card__avatar{width:36px;height:36px;border-radius:50%;border:2px solid color-mix(in srgb,var(--c-primary) 50%,transparent);flex-shrink:0;background:#1e293b;display:flex;align-items:center;justify-content:center;}
+        .db-user-card__name{color:#fff;font-size:.85rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;}
+        .db-user-card__role{color:rgba(255,255,255,.4);font-size:.72rem;}
+        .db-logout-btn{margin-left:auto;background:none;border:none;cursor:pointer;color:rgba(255,255,255,.35);display:flex;align-items:center;transition:color .15s,background .15s;flex-shrink:0;padding:.3rem;border-radius:8px;}
+        .db-logout-btn:hover:not(:disabled){color:#f87171;background:rgba(248,113,113,.1);}
+        .db-logout-btn:disabled{opacity:.5;cursor:not-allowed;}
+        .db-logout-btn .material-symbols-outlined{font-size:19px;}
+        .db-logout-spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:rgba(255,255,255,.7);border-radius:50%;animation:spin .7s linear infinite;}
         @keyframes spin{to{transform:rotate(360deg)}}
-
-        /* ══ MAIN ══ */
-        .db-main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
-        .db-header { height:68px; background:#fff; border-bottom:1px solid #f1f5f9; display:flex; align-items:center; padding:0 2rem; gap:1.25rem; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,.04); }
-        .db-header__search { flex:1; max-width:400px; position:relative; }
-        .db-header__search .material-symbols-outlined { position:absolute; left:.875rem; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:19px; pointer-events:none; }
-        .db-header__search input { width:100%; padding:.65rem 1rem .65rem 2.6rem; background:#f8fafc; border:1.5px solid #f1f5f9; border-radius:11px; font-family:'Plus Jakarta Sans',sans-serif; font-size:.85rem; color:#1e293b; outline:none; transition:border-color .15s, box-shadow .15s; }
+        .db-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+        .db-header{height:68px;background:#fff;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;padding:0 2rem;gap:1.25rem;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+        .db-header__search{flex:1;max-width:400px;position:relative;}
+        .db-header__search .material-symbols-outlined{position:absolute;left:.875rem;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:19px;pointer-events:none;}
+        .db-header__search input{width:100%;padding:.65rem 1rem .65rem 2.6rem;background:#f8fafc;border:1.5px solid #f1f5f9;border-radius:11px;font-family:'Plus Jakarta Sans',sans-serif;font-size:.85rem;color:#1e293b;outline:none;transition:border-color .15s,box-shadow .15s;}
         .db-header__search input::placeholder{color:#94a3b8;}
-        .db-header__search input:focus { border-color:var(--c-primary); box-shadow:0 0 0 3px var(--c-primary-10); }
-        .db-header__actions { display:flex; align-items:center; gap:.625rem; margin-left:auto; }
-        .db-header__workspace { display:flex; align-items:center; gap:.45rem; background:#f8fafc; border:1px solid #f1f5f9; padding:.45rem .8rem; border-radius:10px; font-size:.8rem; font-weight:600; color:#334155; cursor:pointer; transition:background .15s; }
+        .db-header__search input:focus{border-color:var(--c-primary);box-shadow:0 0 0 3px var(--c-primary-10);}
+        .db-header__actions{display:flex;align-items:center;gap:.625rem;margin-left:auto;}
+        .db-header__workspace{display:flex;align-items:center;gap:.45rem;background:#f8fafc;border:1px solid #f1f5f9;padding:.45rem .8rem;border-radius:10px;font-size:.8rem;font-weight:600;color:#334155;cursor:pointer;transition:background .15s;}
         .db-header__workspace:hover{background:#f1f5f9;}
-        .db-header__workspace .dot { width:7px; height:7px; border-radius:50%; background:var(--c-tertiary); flex-shrink:0; }
+        .db-header__workspace .dot{width:7px;height:7px;border-radius:50%;background:var(--c-tertiary);flex-shrink:0;}
         .db-header__workspace .material-symbols-outlined{font-size:15px;color:#94a3b8;}
-        .db-header__icon-btn { width:38px; height:38px; border-radius:10px; border:none; background:transparent; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#64748b; transition:background .15s, color .15s; position:relative; }
+        .db-header__icon-btn{width:38px;height:38px;border-radius:10px;border:none;background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#64748b;transition:background .15s,color .15s;position:relative;}
         .db-header__icon-btn:hover{background:#f1f5f9;color:var(--c-primary);}
         .db-header__icon-btn .material-symbols-outlined{font-size:21px;}
-        .db-notif-dot { position:absolute; top:7px; right:7px; width:7px; height:7px; background:#ef4444; border-radius:50%; border:2px solid #fff; }
-
-        /* ══ CONTENT ══ */
-        .db-content { flex:1; overflow-y:auto; padding:1.75rem 2rem 3rem; display:flex; flex-direction:column; gap:1.75rem; }
+        .db-notif-dot{position:absolute;top:7px;right:7px;width:7px;height:7px;background:#ef4444;border-radius:50%;border:2px solid #fff;}
+        .db-content{flex:1;overflow-y:auto;padding:1.75rem 2rem 3rem;display:flex;flex-direction:column;gap:1.75rem;}
         .db-content::-webkit-scrollbar{width:4px;}
         .db-content::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:99px;}
-
         .db-page-title{font-size:1.4rem;font-weight:700;color:#0f172a;letter-spacing:-.03em;}
         .db-page-sub{font-size:.85rem;color:#64748b;margin-top:.2rem;}
-
-        /* KPI */
         .db-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1.25rem;}
         @media(max-width:1200px){.db-kpi-grid{grid-template-columns:repeat(2,1fr)}}
         @media(max-width:680px){.db-kpi-grid{grid-template-columns:1fr}}
@@ -270,20 +280,14 @@ export const Dashboard = () => {
         .db-mini-bar{flex:1;border-radius:3px 3px 0 0;}
         .db-mini-progress{flex:1;height:5px;background:#f1f5f9;border-radius:99px;overflow:hidden;}
         .db-mini-progress__fill{height:100%;border-radius:99px;}
-
-        /* Two col */
         .db-two-col{display:grid;grid-template-columns:1fr 360px;gap:1.25rem;}
         @media(max-width:1100px){.db-two-col{grid-template-columns:1fr}}
-
-        /* Cards */
         .db-card{background:#fff;border-radius:18px;border:1px solid #f1f5f9;box-shadow:0 2px 8px rgba(0,0,0,.04);overflow:hidden;}
         .db-card__header{padding:1.25rem 1.5rem;border-bottom:1px solid #f8fafc;display:flex;justify-content:space-between;align-items:center;}
         .db-card__title{font-size:.95rem;font-weight:700;color:#0f172a;}
         .db-card__sub{font-size:.775rem;color:#94a3b8;margin-top:1px;}
         .db-card__action{font-size:.78rem;font-weight:600;color:#64748b;background:#f8fafc;border:1px solid #f1f5f9;border-radius:8px;padding:.375rem .8rem;cursor:pointer;transition:background .15s;}
         .db-card__action:hover{background:#f1f5f9;}
-
-        /* Table */
         .db-table{width:100%;border-collapse:collapse;}
         .db-table th{padding:.8rem 1.5rem;text-align:left;font-size:.7rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.09em;background:#fafbfc;}
         .db-table td{padding:.9rem 1.5rem;font-size:.85rem;border-top:1px solid #f8fafc;}
@@ -295,8 +299,6 @@ export const Dashboard = () => {
         .db-table__date{color:#64748b;}
         .db-table__amount{font-weight:700;color:#0f172a;}
         .db-status-badge{display:inline-flex;align-items:center;padding:.22rem .7rem;border-radius:99px;font-size:.7rem;font-weight:700;border:1px solid;}
-
-        /* Billing */
         .db-billing-body{padding:1.25rem;}
         .db-donut-wrap{display:flex;justify-content:center;margin:1.25rem 0;}
         .db-donut{position:relative;width:148px;height:148px;}
@@ -310,8 +312,6 @@ export const Dashboard = () => {
         .db-billing-item__left{display:flex;align-items:center;gap:.6rem;}
         .db-billing-item__name{font-size:.82rem;font-weight:700;color:#0f172a;}
         .db-billing-item__amount{font-size:.82rem;font-weight:700;color:#0f172a;}
-
-        /* Chart */
         .db-chart-header{padding:1.25rem 1.5rem .75rem;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.875rem;}
         .db-chart-legend{display:flex;align-items:center;gap:1rem;}
         .db-chart-legend-item{display:flex;align-items:center;gap:.35rem;font-size:.75rem;font-weight:600;color:#64748b;}
@@ -335,13 +335,16 @@ export const Dashboard = () => {
         </div>
 
         <nav className="db-sidebar__nav">
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter(item => puedeVer(item.roles)).map((item) => {
             if (item.children) {
               const isOpen   = empresaOpen
               const isActive = isEmpresaActive
+              // Filtrar hijos por rol
+              const hijosVisibles = item.children.filter(c => puedeVer(c.roles))
+              if (hijosVisibles.length === 0) return null
+
               return (
                 <div key={item.key} ref={empresaRef}>
-                  {/* Empresa parent button */}
                   <button
                     className={`db-nav-item ${isActive ? 'db-nav-item--active' : ''} ${isOpen && !isActive ? 'db-nav-item--empresa-open' : ''}`}
                     onClick={() => handleNavClick(item.key, true)}
@@ -353,14 +356,13 @@ export const Dashboard = () => {
                     </span>
                   </button>
 
-                  {/* Submenu */}
                   <div className={`db-submenu ${isOpen ? 'db-submenu--open' : ''}`}>
                     <div className="db-submenu-inner">
-                      {item.children.map((child) => (
+                      {hijosVisibles.map((child) => (
                         <button
                           key={child.key}
                           className={`db-sub-item ${activeNav === child.key ? 'db-sub-item--active' : ''}`}
-                          onClick={() => { setActiveNav(child.key); }}
+                          onClick={() => setActiveNav(child.key)}
                         >
                           <span className="material-symbols-outlined">{child.icon}</span>
                           {child.label}
@@ -388,14 +390,15 @@ export const Dashboard = () => {
 
         <div className="db-sidebar__footer">
           <div className="db-user-card">
-            <div className="db-user-card__avatar" style={{ background: `color-mix(in srgb, ${primary} 30%, #1e293b)` }}>
+            <div className="db-user-card__avatar" style={{ background:`color-mix(in srgb, ${primary} 30%, #1e293b)` }}>
               <span style={{ color:'#fff', fontSize:'.8rem', fontWeight:800 }}>
                 {userName?.charAt(0).toUpperCase() || 'U'}
               </span>
             </div>
             <div style={{ overflow:'hidden' }}>
               <p className="db-user-card__name">{userName || 'Usuario'}</p>
-              <p className="db-user-card__role">Administrador</p>
+              {/* Muestra el rol real del usuario, no hardcodeado */}
+              <p className="db-user-card__role">{userRolNombre || 'Usuario'}</p>
             </div>
             <button className="db-logout-btn" onClick={handleLogout}
               disabled={logoutState === 'loading'} title="Cerrar sesión">
@@ -416,7 +419,7 @@ export const Dashboard = () => {
           </div>
           <div className="db-header__actions">
             <div className="db-header__workspace">
-              <span className="dot" /> Workspace Alpha
+              <span className="dot" /> {branding.nombre}
               <span className="material-symbols-outlined">unfold_more</span>
             </div>
             <button className="db-header__icon-btn">
@@ -443,14 +446,25 @@ export const Dashboard = () => {
             />
           )}
 
-          {/* ── Placeholders de las otras páginas ── */}
-          {activeNav === 'empresa/info' && <PlaceholderPage title="Información general" icon="info" />}
-          {activeNav === 'empresa/usuarios' && <PlaceholderPage title="Usuarios y roles" icon="group" />}
-          {activeNav === 'empresa/facturacion' && <PlaceholderPage title="Facturación y plan" icon="credit_card" />}
-          {activeNav === 'inventario'  && <PlaceholderPage title="Inventario"  icon="inventory_2" />}
-          {activeNav === 'contratos'   && <PlaceholderPage title="Contratos"   icon="description" />}
-          {activeNav === 'facturacion' && <PlaceholderPage title="Facturación" icon="receipt_long" />}
-          {activeNav === 'reportes'    && <PlaceholderPage title="Reportes"    icon="bar_chart" />}
+          {/* ── Control de Roles (solo admin llega aquí) ── */}
+          {activeNav === 'empresa/roles' && (
+            hasRol('Administrador')
+              ? <RolesPanel />
+              : <AccesoDenegado />
+          )}
+
+          {/* ── Placeholders ── */}
+          {activeNav === 'empresa/info'        && <PlaceholderPage title="Información general"  icon="info"         />}
+          {activeNav === 'empresa/usuarios'    && <PlaceholderPage title="Usuarios y roles"      icon="group"        />}
+          {activeNav === 'empresa/facturacion' && <PlaceholderPage title="Facturación y plan"    icon="credit_card"  />}
+          {activeNav === 'inventario'          && <PlaceholderPage title="Inventario"             icon="inventory_2"  />}
+          {activeNav === 'contratos'           && <PlaceholderPage title="Contratos"              icon="description"  />}
+          {activeNav === 'facturacion'         && <PlaceholderPage title="Facturación"            icon="receipt_long" />}
+          {activeNav === 'reportes'            && (
+            hasRol('Administrador')
+              ? <PlaceholderPage title="Reportes" icon="bar_chart" />
+              : <AccesoDenegado />
+          )}
 
           {/* ── Panel Principal ── */}
           {activeNav === 'dashboard' && (<>
@@ -459,7 +473,6 @@ export const Dashboard = () => {
               <p className="db-page-sub">Resumen de actividad — {branding.nombre}</p>
             </div>
 
-            {/* KPI Cards */}
             <div className="db-kpi-grid">
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
@@ -475,7 +488,6 @@ export const Dashboard = () => {
                   </div>
                 </div>
               </div>
-
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
                   <div><p className="db-kpi-card__label">Facturas Pendientes</p><p className="db-kpi-card__value">48</p></div>
@@ -488,7 +500,6 @@ export const Dashboard = () => {
                   <span style={{fontSize:'.72rem',fontWeight:700,color:primary}}>68% requieren atención</span>
                 </div>
               </div>
-
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
                   <div><p className="db-kpi-card__label">Ingresos Mensuales</p><p className="db-kpi-card__value">$12,500</p></div>
@@ -502,7 +513,6 @@ export const Dashboard = () => {
                   </div>
                 </div>
               </div>
-
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
                   <div><p className="db-kpi-card__label">Tasa de Retención</p><p className="db-kpi-card__value">98%</p></div>
@@ -521,7 +531,6 @@ export const Dashboard = () => {
               </div>
             </div>
 
-            {/* Table + Billing */}
             <div className="db-two-col">
               <div className="db-card">
                 <div className="db-card__header">
@@ -548,7 +557,6 @@ export const Dashboard = () => {
                   </table>
                 </div>
               </div>
-
               <div className="db-card">
                 <div className="db-card__header"><div><p className="db-card__title">Estado de Facturación</p></div></div>
                 <div className="db-billing-body">
@@ -576,7 +584,6 @@ export const Dashboard = () => {
               </div>
             </div>
 
-            {/* Chart */}
             <div className="db-card">
               <div className="db-chart-header">
                 <div><p className="db-card__title">Flujo de Caja</p><p className="db-card__sub">Tendencia mensual de ingresos y egresos</p></div>
