@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { useAuth } from './useAuth'
-import { useBranding } from './useBranding'
-import type { Branding } from './useBranding'
-import { Personalizacion } from './Personalizacion'
-import RolesPanel from './Rolespanel'
+import { useAuth } from '../hooks/useAuth'
+import { usePermisos } from '../hooks/usePermisos'
+import { useBranding } from '../hooks/useBranding'
+import type { Branding } from '../hooks/useBranding'
+import { Personalizacion } from './modules/empresa/Personalizacion'
+import RolesPanel from './modules/empresa/roles/Rolespanel'
+import UsuariosPanel from './modules/empresa/usuarios/UsuariosPanel'
 
-// ─── Mock data (Panel Principal) ──────────────────────────────────────────────
+// ─── Mock data ────────────────────────────────────────────────────────────────
 
 const MOCK_CONTRACTS = [
   { id:'#CN-2024-084', client:'Tech Solutions S.A.', initials:'TS', color:'indigo',  date:'14 Oct, 2024', amount:'$4,250.00', status:'Firmado'  },
@@ -26,7 +28,7 @@ const INITIALS_COLORS: Record<string,{bg:string;text:string}> = {
   emerald:{bg:'#d1fae5',text:'#059669'},
 }
 
-// ─── Nav types ─────────────────────────────────────────────────────────────────
+// ─── Nav types ────────────────────────────────────────────────────────────────
 
 type NavKey =
   | 'empresa'
@@ -34,7 +36,7 @@ type NavKey =
   | 'empresa/usuarios'
   | 'empresa/facturacion'
   | 'empresa/personalizacion'
-  | 'empresa/roles'           // <-- NUEVO
+  | 'empresa/roles'
   | 'dashboard'
   | 'inventario'
   | 'contratos'
@@ -42,48 +44,46 @@ type NavKey =
   | 'reportes'
 
 interface NavChild {
-  key:   NavKey
-  icon:  string
-  label: string
-  tag?:  string
-  /** Si está definido, solo estos roles ven este ítem */
-  roles?: string[]
+  key:      NavKey
+  icon:     string
+  label:    string
+  tag?:     string
+  permiso?: string   // clave de permiso requerida — undefined = visible para todos
 }
 
 interface NavItem {
   key:       NavKey
   icon:      string
   label:     string
-  /** Si está definido, solo estos roles ven este ítem */
-  roles?:    string[]
+  permiso?:  string
   children?: NavChild[]
 }
 
-// ─── Definición del nav con control de roles ──────────────────────────────────
+// ─── Nav con permisos ─────────────────────────────────────────────────────────
 //
-//  • roles: ['Administrador']  → solo admins lo ven
-//  • sin roles                 → todos lo ven
+//  permiso: 'empresa.roles.ver'  → solo usuarios con ese permiso lo ven
+//  sin permiso                   → visible para todos (ej: dashboard)
 //
 const NAV_ITEMS: NavItem[] = [
   {
     key: 'empresa', icon: 'business', label: 'Empresa',
+    // El grupo "Empresa" se muestra si el usuario tiene AL MENOS UNO de sus hijos
     children: [
-      { key: 'empresa/info',            icon: 'info',        label: 'Información general' },
-      { key: 'empresa/usuarios',        icon: 'group',       label: 'Usuarios y roles' },
-      { key: 'empresa/facturacion',     icon: 'credit_card', label: 'Facturación y plan' },
-      { key: 'empresa/personalizacion', icon: 'palette',     label: 'Personalización', tag: 'Nuevo' },
-      // Solo admins ven "Control de Roles"
-      { key: 'empresa/roles',           icon: 'shield',      label: 'Control de Roles', roles: ['Administrador'] },
+      { key: 'empresa/info',            icon: 'info',        label: 'Información general',  permiso: 'empresa.info.ver' },
+      { key: 'empresa/usuarios',        icon: 'group',       label: 'Usuarios',             permiso: 'empresa.usuarios.ver' },
+      { key: 'empresa/facturacion',     icon: 'credit_card', label: 'Facturación y plan',   permiso: 'empresa.facturacion.ver' },
+      { key: 'empresa/personalizacion', icon: 'palette',     label: 'Personalización',      permiso: 'empresa.personalizacion.ver', tag: 'Nuevo' },
+      { key: 'empresa/roles',           icon: 'shield',      label: 'Control de Roles',     permiso: 'empresa.roles.ver' },
     ],
   },
   { key: 'dashboard',   icon: 'grid_view',    label: 'Panel Principal' },
-  { key: 'inventario',  icon: 'inventory_2',  label: 'Inventario' },
-  { key: 'contratos',   icon: 'description',  label: 'Contratos' },
-  { key: 'facturacion', icon: 'receipt_long', label: 'Facturación' },
-  { key: 'reportes',    icon: 'bar_chart',    label: 'Reportes', roles: ['Administrador'] },
+  { key: 'inventario',  icon: 'inventory_2',  label: 'Inventario',   permiso: 'inventario.ver' },
+  { key: 'contratos',   icon: 'description',  label: 'Contratos',    permiso: 'contratos.ver' },
+  { key: 'facturacion', icon: 'receipt_long', label: 'Facturación',  permiso: 'facturacion.ver' },
+  { key: 'reportes',    icon: 'bar_chart',    label: 'Reportes',     permiso: 'reportes.ver' },
 ]
 
-// ─── Skeleton ──────────────────────────────────────────────────────────────────
+// ─── Shared components ────────────────────────────────────────────────────────
 
 const DashboardSkeleton = () => (
   <div style={{display:'flex',height:'100vh',overflow:'hidden',background:'#f8f9fc'}}>
@@ -108,8 +108,6 @@ const DashboardSkeleton = () => (
   </div>
 )
 
-// ─── Placeholder ───────────────────────────────────────────────────────────────
-
 const PlaceholderPage = ({ title, icon }: { title: string; icon: string }) => (
   <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:'1rem',color:'#94a3b8',paddingTop:'4rem',animation:'pzIn .3s ease'}}>
     <style>{`@keyframes pzIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
@@ -119,8 +117,6 @@ const PlaceholderPage = ({ title, icon }: { title: string; icon: string }) => (
   </div>
 )
 
-// ─── Pantalla de acceso denegado ───────────────────────────────────────────────
-
 const AccesoDenegado = () => (
   <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:'1rem',color:'#94a3b8',paddingTop:'4rem',animation:'pzIn .3s ease'}}>
     <span className="material-symbols-outlined" style={{fontSize:52,opacity:.35,color:'#f87171'}}>lock</span>
@@ -129,11 +125,12 @@ const AccesoDenegado = () => (
   </div>
 )
 
-// ─── Main component ────────────────────────────────────────────────────────────
+// ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export const Dashboard = () => {
   const { slug } = useParams<{ slug: string }>()
-  const { userName, userRolNombre, hasRol, logout } = useAuth()
+  const { userName, userRolNombre, logout } = useAuth()
+  const { puede }                           = usePermisos()
   const { branding: initialBranding, loading: brandingLoading } = useBranding(slug)
 
   const [branding,    setBranding]    = useState<Branding | null>(null)
@@ -158,13 +155,11 @@ export const Dashboard = () => {
 
   if (brandingLoading || !branding) return <DashboardSkeleton />
 
-  const puedeVer = (roles?: string[]): boolean => {
-    if (!roles || roles.length === 0) return true
-    const result = roles.some(r => hasRol(r))
-    console.log('puedeVer', roles, '→', result, '| userRolNombre:', userRolNombre)
-    return result
-  }
-  
+  // ── Helpers de visibilidad ───────────────────────────────────────────────────
+  // Si no hay permiso definido → visible para todos
+  // Si hay permiso → verificar con usePermisos
+  const puedeVer = (permiso?: string): boolean =>
+    !permiso || puede(permiso)
 
   const handleLogout = async () => {
     setLogoutState('loading')
@@ -181,12 +176,8 @@ export const Dashboard = () => {
     setBranding(prev => prev ? { ...prev, logo: newLogoUrl, colors: newColors } : prev)
   }
 
-  /**
-   * Dado un array de roles permitidos (o ninguno), devuelve si el usuario actual
-   * puede ver ese ítem. Si no hay roles definidos → visible para todos.
-   */
-
   const { primary, secondary, tertiary, quaternary } = branding.colors
+  const isEmpresaActive = activeNav.startsWith('empresa')
 
   const cssVars = {
     '--c-primary':    primary,
@@ -197,8 +188,6 @@ export const Dashboard = () => {
     '--c-primary-20': `color-mix(in srgb, ${primary} 20%, transparent)`,
     '--c-primary-30': `color-mix(in srgb, ${primary} 30%, transparent)`,
   } as React.CSSProperties
-
-  const isEmpresaActive = activeNav.startsWith('empresa')
 
   return (
     <div style={cssVars} className="db-root">
@@ -335,13 +324,13 @@ export const Dashboard = () => {
         </div>
 
         <nav className="db-sidebar__nav">
-          {NAV_ITEMS.filter(item => puedeVer(item.roles)).map((item) => {
+          {NAV_ITEMS.filter(item => puedeVer(item.permiso)).map((item) => {
             if (item.children) {
+              const hijosVisibles = item.children.filter(c => puedeVer(c.permiso))
+              if (hijosVisibles.length === 0) return null
+
               const isOpen   = empresaOpen
               const isActive = isEmpresaActive
-              // Filtrar hijos por rol
-              const hijosVisibles = item.children.filter(c => puedeVer(c.roles))
-              if (hijosVisibles.length === 0) return null
 
               return (
                 <div key={item.key} ref={empresaRef}>
@@ -397,7 +386,6 @@ export const Dashboard = () => {
             </div>
             <div style={{ overflow:'hidden' }}>
               <p className="db-user-card__name">{userName || 'Usuario'}</p>
-              {/* Muestra el rol real del usuario, no hardcodeado */}
               <p className="db-user-card__role">{userRolNombre || 'Usuario'}</p>
             </div>
             <button className="db-logout-btn" onClick={handleLogout}
@@ -432,39 +420,34 @@ export const Dashboard = () => {
           </div>
         </header>
 
-        {/* ── CONTENT ROUTER ── */}
         <div className="db-content">
 
           {/* ── Personalización ── */}
           {activeNav === 'empresa/personalizacion' && (
-            <Personalizacion
-              currentLogo={branding.logo}
-              currentNombre={branding.nombre}
-              currentColors={branding.colors}
-              slug={slug ?? ''}
-              onBrandingUpdated={handleBrandingUpdated}
-            />
+            puedeVer('empresa.personalizacion.ver')
+              ? <Personalizacion
+                  currentLogo={branding.logo}
+                  currentNombre={branding.nombre}
+                  currentColors={branding.colors}
+                  slug={slug ?? ''}
+                  onBrandingUpdated={handleBrandingUpdated}
+                />
+              : <AccesoDenegado />
           )}
 
-          {/* ── Control de Roles (solo admin llega aquí) ── */}
+          {/* ── Control de Roles ── */}
           {activeNav === 'empresa/roles' && (
-            hasRol('Administrador')
-              ? <RolesPanel />
-              : <AccesoDenegado />
+            puedeVer('empresa.roles.ver') ? <RolesPanel /> : <AccesoDenegado />
           )}
 
           {/* ── Placeholders ── */}
-          {activeNav === 'empresa/info'        && <PlaceholderPage title="Información general"  icon="info"         />}
-          {activeNav === 'empresa/usuarios'    && <PlaceholderPage title="Usuarios y roles"      icon="group"        />}
-          {activeNav === 'empresa/facturacion' && <PlaceholderPage title="Facturación y plan"    icon="credit_card"  />}
-          {activeNav === 'inventario'          && <PlaceholderPage title="Inventario"             icon="inventory_2"  />}
-          {activeNav === 'contratos'           && <PlaceholderPage title="Contratos"              icon="description"  />}
-          {activeNav === 'facturacion'         && <PlaceholderPage title="Facturación"            icon="receipt_long" />}
-          {activeNav === 'reportes'            && (
-            hasRol('Administrador')
-              ? <PlaceholderPage title="Reportes" icon="bar_chart" />
-              : <AccesoDenegado />
-          )}
+          {activeNav === 'empresa/info'     && (puedeVer('empresa.info.ver')           ? <PlaceholderPage title="Información general" icon="info"        /> : <AccesoDenegado />)}
+          {activeNav === 'empresa/usuarios' && (puedeVer('empresa.usuarios.ver')       ? <UsuariosPanel />                                                 : <AccesoDenegado />)}
+          {activeNav === 'empresa/facturacion' && (puedeVer('empresa.facturacion.ver') ? <PlaceholderPage title="Facturación y plan" icon="credit_card" /> : <AccesoDenegado />)}
+          {activeNav === 'inventario'  && (puedeVer('inventario.ver')  ? <PlaceholderPage title="Inventario"  icon="inventory_2"  /> : <AccesoDenegado />)}
+          {activeNav === 'contratos'   && (puedeVer('contratos.ver')   ? <PlaceholderPage title="Contratos"   icon="description"  /> : <AccesoDenegado />)}
+          {activeNav === 'facturacion' && (puedeVer('facturacion.ver') ? <PlaceholderPage title="Facturación" icon="receipt_long" /> : <AccesoDenegado />)}
+          {activeNav === 'reportes'    && (puedeVer('reportes.ver')    ? <PlaceholderPage title="Reportes"    icon="bar_chart"    /> : <AccesoDenegado />)}
 
           {/* ── Panel Principal ── */}
           {activeNav === 'dashboard' && (<>
