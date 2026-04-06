@@ -1,107 +1,95 @@
-import { useState, useEffect, useRef } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { usePermisos } from '../hooks/usePermisos'
 import { useBranding } from '../hooks/useBranding'
 import type { Branding } from '../hooks/useBranding'
+import { apiFetch } from '../api/client'
 import { Personalizacion } from './modules/empresa/Personalizacion'
 import RolesPanel from './modules/empresa/roles/Rolespanel'
 import UsuariosPanel from './modules/empresa/usuarios/UsuariosPanel'
-
-// ─── Mock data ────────────────────────────────────────────────────────────────
+import PerfilPanel from './modules/perfil/PerfilPanel'
+import ParametrizacionPanel from './modules/empresa/parametrizacion/ParametrizacionPanel'
+import InventarioPanel, {
+  type InventarioData,
+  type Categoria,
+  type Bodega,
+  type UnidadMedida,
+  type Producto,
+} from './modules/inventario/InventarioPanel'
 
 const MOCK_CONTRACTS = [
-  { id:'#CN-2024-084', client:'Tech Solutions S.A.', initials:'TS', color:'indigo',  date:'14 Oct, 2024', amount:'$4,250.00', status:'Firmado'  },
-  { id:'#CN-2024-085', client:'Media Loft Group',    initials:'ML', color:'amber',   date:'12 Oct, 2024', amount:'$1,800.00', status:'Pendiente' },
-  { id:'#CN-2024-082', client:'Bright Capital',      initials:'BC', color:'rose',    date:'08 Oct, 2024', amount:'$7,100.00', status:'Expirado'  },
-  { id:'#CN-2024-087', client:'Green Energy Ltd.',   initials:'GE', color:'emerald', date:'05 Oct, 2024', amount:'$2,400.00', status:'Firmado'   },
+  { id: '#CN-2024-084', client: 'Tech Solutions S.A.', initials: 'TS', color: 'indigo', date: '14 Oct, 2024', amount: '$4,250.00', status: 'Firmado' },
+  { id: '#CN-2024-085', client: 'Media Loft Group',    initials: 'ML', color: 'amber',  date: '12 Oct, 2024', amount: '$1,800.00', status: 'Pendiente' },
+  { id: '#CN-2024-082', client: 'Bright Capital',      initials: 'BC', color: 'rose',   date: '08 Oct, 2024', amount: '$7,100.00', status: 'Expirado' },
+  { id: '#CN-2024-087', client: 'Green Energy Ltd.',   initials: 'GE', color: 'emerald',date: '05 Oct, 2024', amount: '$2,400.00', status: 'Firmado' },
 ]
-const STATUS_STYLES: Record<string,{bg:string;text:string;border:string}> = {
-  Firmado:  {bg:'rgba(172,197,95,0.12)', text:'#6a8f22', border:'rgba(172,197,95,0.3)'},
-  Pendiente:{bg:'rgba(229,131,70,0.12)', text:'#c2611a', border:'rgba(229,131,70,0.3)'},
-  Expirado: {bg:'rgba(148,163,184,0.12)',text:'#64748b', border:'rgba(148,163,184,0.3)'},
+const STATUS_STYLES: Record<string, { bg: string; text: string; border: string }> = {
+  Firmado:  { bg: 'rgba(172,197,95,0.12)',  text: '#6a8f22', border: 'rgba(172,197,95,0.3)' },
+  Pendiente:{ bg: 'rgba(229,131,70,0.12)',  text: '#c2611a', border: 'rgba(229,131,70,0.3)' },
+  Expirado: { bg: 'rgba(148,163,184,0.12)', text: '#64748b', border: 'rgba(148,163,184,0.3)' },
 }
-const INITIALS_COLORS: Record<string,{bg:string;text:string}> = {
-  indigo: {bg:'#e0e7ff',text:'#4338ca'},
-  amber:  {bg:'#fef3c7',text:'#d97706'},
-  rose:   {bg:'#ffe4e6',text:'#e11d48'},
-  emerald:{bg:'#d1fae5',text:'#059669'},
+const INITIALS_COLORS: Record<string, { bg: string; text: string }> = {
+  indigo: { bg: '#e0e7ff', text: '#4338ca' },
+  amber:  { bg: '#fef3c7', text: '#d97706' },
+  rose:   { bg: '#ffe4e6', text: '#e11d48' },
+  emerald:{ bg: '#d1fae5', text: '#059669' },
 }
-
-// ─── Nav types ────────────────────────────────────────────────────────────────
 
 type NavKey =
-  | 'empresa'
-  | 'empresa/info'
-  | 'empresa/usuarios'
-  | 'empresa/facturacion'
-  | 'empresa/personalizacion'
-  | 'empresa/roles'
+  | 'empresa' | 'empresa/info' | 'empresa/usuarios' | 'empresa/facturacion'
+  | 'empresa/personalizacion' | 'empresa/roles' | 'empresa/parametrizacion'
   | 'dashboard'
-  | 'inventario'
-  | 'contratos'
-  | 'facturacion'
-  | 'reportes'
+  | 'inventario' | 'inventario/productos' | 'inventario/categorias' | 'inventario/bodegas'
+  | 'contratos' | 'facturacion' | 'reportes' | 'perfil'
 
-interface NavChild {
-  key:      NavKey
-  icon:     string
-  label:    string
-  tag?:     string
-  permiso?: string   // clave de permiso requerida — undefined = visible para todos
-}
+interface NavChild { key: NavKey; icon: string; label: string; tag?: string; permiso?: string }
+interface NavItem  { key: NavKey; icon: string; label: string; permiso?: string; children?: NavChild[] }
 
-interface NavItem {
-  key:       NavKey
-  icon:      string
-  label:     string
-  permiso?:  string
-  children?: NavChild[]
-}
-
-// ─── Nav con permisos ─────────────────────────────────────────────────────────
-//
-//  permiso: 'empresa.roles.ver'  → solo usuarios con ese permiso lo ven
-//  sin permiso                   → visible para todos (ej: dashboard)
-//
 const NAV_ITEMS: NavItem[] = [
   {
     key: 'empresa', icon: 'business', label: 'Empresa',
-    // El grupo "Empresa" se muestra si el usuario tiene AL MENOS UNO de sus hijos
     children: [
       { key: 'empresa/info',            icon: 'info',        label: 'Información general',  permiso: 'empresa.info.ver' },
       { key: 'empresa/usuarios',        icon: 'group',       label: 'Usuarios',             permiso: 'empresa.usuarios.ver' },
       { key: 'empresa/facturacion',     icon: 'credit_card', label: 'Facturación y plan',   permiso: 'empresa.facturacion.ver' },
       { key: 'empresa/personalizacion', icon: 'palette',     label: 'Personalización',      permiso: 'empresa.personalizacion.ver', tag: 'Nuevo' },
       { key: 'empresa/roles',           icon: 'shield',      label: 'Control de Roles',     permiso: 'empresa.roles.ver' },
+      { key: 'empresa/parametrizacion', icon: 'tune',        label: 'Parametrización',      permiso: 'empresa.personalizacion.ver' },
     ],
   },
-  { key: 'dashboard',   icon: 'grid_view',    label: 'Panel Principal' },
-  { key: 'inventario',  icon: 'inventory_2',  label: 'Inventario',   permiso: 'inventario.ver' },
-  { key: 'contratos',   icon: 'description',  label: 'Contratos',    permiso: 'contratos.ver' },
-  { key: 'facturacion', icon: 'receipt_long', label: 'Facturación',  permiso: 'facturacion.ver' },
-  { key: 'reportes',    icon: 'bar_chart',    label: 'Reportes',     permiso: 'reportes.ver' },
+  { key: 'dashboard', icon: 'grid_view', label: 'Panel Principal' },
+  {
+    key: 'inventario', icon: 'inventory_2', label: 'Inventario', permiso: 'inventario.ver',
+    children: [
+      { key: 'inventario/productos',  icon: 'inventory_2', label: 'Productos',  permiso: 'inventario.productos.ver' },
+      { key: 'inventario/categorias', icon: 'category',    label: 'Categorías', permiso: 'inventario.categorias.gestionar' },
+      { key: 'inventario/bodegas',    icon: 'warehouse',   label: 'Bodegas',    permiso: 'inventario.bodegas.gestionar' },
+    ],
+  },
+  { key: 'contratos',   icon: 'description',  label: 'Contratos',   permiso: 'contratos.ver' },
+  { key: 'facturacion', icon: 'receipt_long', label: 'Facturación', permiso: 'facturacion.ver' },
+  { key: 'reportes',    icon: 'bar_chart',    label: 'Reportes',    permiso: 'reportes.ver' },
 ]
 
-// ─── Shared components ────────────────────────────────────────────────────────
-
 const DashboardSkeleton = () => (
-  <div style={{display:'flex',height:'100vh',overflow:'hidden',background:'#f8f9fc'}}>
+  <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#f8f9fc' }}>
     <style>{`@keyframes skPulse{0%,100%{opacity:.45}50%{opacity:.9}}.sk{background:#e2e8f0;border-radius:10px;animation:skPulse 1.5s ease-in-out infinite;}`}</style>
-    <div style={{width:272,background:'#0f1f4a',padding:'1.75rem 1.25rem',display:'flex',flexDirection:'column',gap:'.75rem',flexShrink:0}}>
-      <div className="sk" style={{width:140,height:32,background:'rgba(255,255,255,0.1)'}}/>
-      <div style={{marginTop:'1rem',display:'flex',flexDirection:'column',gap:'.5rem'}}>
-        {[1,2,3,4,5,6,7].map(i=><div key={i} className="sk" style={{height:42,background:'rgba(255,255,255,0.06)'}}/>)}
+    <div style={{ width: 272, background: '#0f1f4a', padding: '1.75rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '.75rem', flexShrink: 0 }}>
+      <div className="sk" style={{ width: 140, height: 32, background: 'rgba(255,255,255,0.1)' }} />
+      <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
+        {[1,2,3,4,5,6,7].map(i => <div key={i} className="sk" style={{ height: 42, background: 'rgba(255,255,255,0.06)' }} />)}
       </div>
     </div>
-    <div style={{flex:1,display:'flex',flexDirection:'column'}}>
-      <div style={{height:68,background:'#fff',borderBottom:'1px solid #f1f5f9',padding:'0 2rem',display:'flex',alignItems:'center',gap:'1rem'}}>
-        <div className="sk" style={{width:320,height:38}}/><div className="sk" style={{width:140,height:32,marginLeft:'auto'}}/>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: 68, background: '#fff', borderBottom: '1px solid #f1f5f9', padding: '0 2rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div className="sk" style={{ width: 320, height: 38 }} />
+        <div className="sk" style={{ width: 140, height: 32, marginLeft: 'auto' }} />
       </div>
-      <div style={{padding:'2rem',display:'flex',flexDirection:'column',gap:'1.5rem'}}>
-        <div className="sk" style={{width:200,height:28}}/>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'1.25rem'}}>
-          {[1,2,3,4].map(i=><div key={i} className="sk" style={{height:130,borderRadius:18}}/>)}
+      <div style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div className="sk" style={{ width: 200, height: 28 }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1.25rem' }}>
+          {[1,2,3,4].map(i => <div key={i} className="sk" style={{ height: 130, borderRadius: 18 }} />)}
         </div>
       </div>
     </div>
@@ -109,36 +97,56 @@ const DashboardSkeleton = () => (
 )
 
 const PlaceholderPage = ({ title, icon }: { title: string; icon: string }) => (
-  <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:'1rem',color:'#94a3b8',paddingTop:'4rem',animation:'pzIn .3s ease'}}>
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: '1rem', color: '#94a3b8', paddingTop: '4rem', animation: 'pzIn .3s ease' }}>
     <style>{`@keyframes pzIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
-    <span className="material-symbols-outlined" style={{fontSize:52,opacity:.35}}>{icon}</span>
-    <p style={{fontWeight:700,fontSize:'1.1rem',color:'#334155'}}>{title}</p>
-    <p style={{fontSize:'.85rem'}}>Esta sección estará disponible próximamente.</p>
+    <span className="material-symbols-outlined" style={{ fontSize: 52, opacity: .35 }}>{icon}</span>
+    <p style={{ fontWeight: 700, fontSize: '1.1rem', color: '#334155' }}>{title}</p>
+    <p style={{ fontSize: '.85rem' }}>Esta sección estará disponible próximamente.</p>
   </div>
 )
 
 const AccesoDenegado = () => (
-  <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:'1rem',color:'#94a3b8',paddingTop:'4rem',animation:'pzIn .3s ease'}}>
-    <span className="material-symbols-outlined" style={{fontSize:52,opacity:.35,color:'#f87171'}}>lock</span>
-    <p style={{fontWeight:700,fontSize:'1.1rem',color:'#334155'}}>Acceso restringido</p>
-    <p style={{fontSize:'.85rem'}}>No tienes permisos para ver esta sección.</p>
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: '1rem', color: '#94a3b8', paddingTop: '4rem', animation: 'pzIn .3s ease' }}>
+    <span className="material-symbols-outlined" style={{ fontSize: 52, opacity: .35, color: '#f87171' }}>lock</span>
+    <p style={{ fontWeight: 700, fontSize: '1.1rem', color: '#334155' }}>Acceso restringido</p>
+    <p style={{ fontSize: '.85rem' }}>No tienes permisos para ver esta sección.</p>
   </div>
 )
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
-
 export const Dashboard = () => {
-  const { slug } = useParams<{ slug: string }>()
+  const { slug }  = useParams<{ slug: string }>()
+  const navigate  = useNavigate()
+  const location  = useLocation()
   const { userName, userRolNombre, logout } = useAuth()
-  const { puede }                           = usePermisos()
+  const { puede } = usePermisos()
   const { branding: initialBranding, loading: brandingLoading } = useBranding(slug)
 
   const [branding,    setBranding]    = useState<Branding | null>(null)
-  const [activeNav,   setActiveNav]   = useState<NavKey>('dashboard')
-  const [empresaOpen, setEmpresaOpen] = useState(false)
-  const [logoutState, setLogoutState] = useState<'idle'|'loading'>('idle')
+  const [logoutState, setLogoutState] = useState<'idle' | 'loading'>('idle')
+  const [empresaOpen,    setEmpresaOpen]    = useState(false)
+  const [inventarioOpen, setInventarioOpen] = useState(false)
+  const empresaRef    = useRef<HTMLDivElement>(null)
+  const inventarioRef = useRef<HTMLDivElement>(null)
 
-  const empresaRef = useRef<HTMLDivElement>(null)
+  // ── Inventario — cooldown de 30s ──────────────────────────────────────────
+  // Al mutar algo en inventario → forzarRecargarInventario() (cooldown = 0, recarga inmediata)
+  // Al volver de parametrización → el cooldown ya expiró (>30s) → recarga automática
+  // Al navegar entre productos/categorías/bodegas → cooldown activo → sin fetch
+  const [invData,    setInvData]    = useState<InventarioData | null>(null)
+  const [loadingInv, setLoadingInv] = useState(false)
+  const invUltimaCargaRef           = useRef<number>(0)
+  const INV_COOLDOWN_MS             = 30_000
+
+  const activeNav: NavKey = (() => {
+    const base = `/${slug}/dashboard`
+    const sub  = location.pathname.replace(base, '').replace(/^\//, '')
+    return (sub as NavKey) || 'dashboard'
+  })()
+
+  useEffect(() => {
+    if (activeNav.startsWith('empresa'))    setEmpresaOpen(true)
+    if (activeNav.startsWith('inventario')) setInventarioOpen(true)
+  }, [activeNav])
 
   useEffect(() => {
     if (!brandingLoading && initialBranding) setBranding(initialBranding)
@@ -153,23 +161,63 @@ export const Dashboard = () => {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  const cargarInventario = useCallback(async () => {
+    setLoadingInv(true)
+    try {
+      const [cats, bods, unds, prods] = await Promise.all([
+        apiFetch<Categoria[]>('inventario/categorias'),
+        apiFetch<Bodega[]>('inventario/bodegas'),
+        apiFetch<UnidadMedida[]>('inventario/unidades-medida'),
+        apiFetch<Producto[]>('inventario/productos'),
+      ])
+      setInvData({
+        categorias: Array.isArray(cats)  ? cats  : [],
+        bodegas:    Array.isArray(bods)  ? bods  : [],
+        unidades:   Array.isArray(unds)  ? unds  : [],
+        productos:  Array.isArray(prods) ? prods : [],
+      })
+    } catch (e) {
+      console.error('Error cargando inventario:', e)
+    } finally {
+      setLoadingInv(false)
+    }
+  }, [])
+
+  // Recarga con cooldown — se usa al entrar a cualquier ruta de inventario
+  // Si pasaron más de 30s desde la última carga (ej: volviste de parametrización), recarga
+  // Si navegas entre productos/categorías/bodegas dentro del cooldown, no recarga
+  useEffect(() => {
+    if (!activeNav.startsWith('inventario')) return
+    const ahora   = Date.now()
+    const elapsed = ahora - invUltimaCargaRef.current
+    if (elapsed > INV_COOLDOWN_MS) {
+      invUltimaCargaRef.current = ahora
+      cargarInventario()
+    }
+  }, [activeNav, cargarInventario])
+
+  // Forzar recarga inmediata — se pasa como onMutacion al InventarioPanel
+  // Resetea el cooldown a 0 para que la próxima entrada también recargue
+  const forzarRecargarInventario = useCallback(() => {
+    invUltimaCargaRef.current = 0
+    cargarInventario()
+  }, [cargarInventario])
+
   if (brandingLoading || !branding) return <DashboardSkeleton />
 
-  // ── Helpers de visibilidad ───────────────────────────────────────────────────
-  // Si no hay permiso definido → visible para todos
-  // Si hay permiso → verificar con usePermisos
-  const puedeVer = (permiso?: string): boolean =>
-    !permiso || puede(permiso)
+  const puedeVer = (permiso?: string): boolean => !permiso || puede(permiso)
 
   const handleLogout = async () => {
     setLogoutState('loading')
     await logout(slug)
   }
 
-  const handleNavClick = (key: NavKey, hasChildren?: boolean) => {
-    if (hasChildren) { setEmpresaOpen(prev => !prev); return }
-    setActiveNav(key)
-    if (!key.startsWith('empresa')) setEmpresaOpen(false)
+  const handleNavClick = (key: NavKey) => {
+    if (key === 'empresa')    { setEmpresaOpen(prev => !prev);    return }
+    if (key === 'inventario') { setInventarioOpen(prev => !prev); return }
+    navigate(`/${slug}/dashboard${key === 'dashboard' ? '' : '/' + key}`)
+    if (!key.startsWith('empresa'))    setEmpresaOpen(false)
+    if (!key.startsWith('inventario')) setInventarioOpen(false)
   }
 
   const handleBrandingUpdated = (newColors: Branding['colors'], newLogoUrl: string) => {
@@ -177,7 +225,6 @@ export const Dashboard = () => {
   }
 
   const { primary, secondary, tertiary, quaternary } = branding.colors
-  const isEmpresaActive = activeNav.startsWith('empresa')
 
   const cssVars = {
     '--c-primary':    primary,
@@ -209,7 +256,7 @@ export const Dashboard = () => {
         .db-nav-item:hover{background:rgba(255,255,255,.07);color:rgba(255,255,255,.85);}
         .db-nav-item--active{background:rgba(255,255,255,.11)!important;color:#fff!important;font-weight:600;}
         .db-nav-item--active .db-nav-item__icon{color:var(--c-primary);}
-        .db-nav-item--empresa-open{background:rgba(255,255,255,.07);color:rgba(255,255,255,.85);}
+        .db-nav-item--open{background:rgba(255,255,255,.07);color:rgba(255,255,255,.85);}
         .db-nav-item__chevron{margin-left:auto;font-size:17px!important;transition:transform .2s;opacity:.6;}
         .db-nav-item__chevron--open{transform:rotate(180deg);}
         .db-submenu{overflow:hidden;max-height:0;transition:max-height .28s cubic-bezier(.4,0,.2,1),opacity .2s ease;opacity:0;}
@@ -328,31 +375,27 @@ export const Dashboard = () => {
             if (item.children) {
               const hijosVisibles = item.children.filter(c => puedeVer(c.permiso))
               if (hijosVisibles.length === 0) return null
-
-              const isOpen   = empresaOpen
-              const isActive = isEmpresaActive
-
+              const isEmpresa = item.key === 'empresa'
+              const isInv     = item.key === 'inventario'
+              const isOpen    = isEmpresa ? empresaOpen : isInv ? inventarioOpen : false
+              const isActive  = activeNav.startsWith(item.key)
+              const ref       = isEmpresa ? empresaRef : isInv ? inventarioRef : undefined
               return (
-                <div key={item.key} ref={empresaRef}>
+                <div key={item.key} ref={ref}>
                   <button
-                    className={`db-nav-item ${isActive ? 'db-nav-item--active' : ''} ${isOpen && !isActive ? 'db-nav-item--empresa-open' : ''}`}
-                    onClick={() => handleNavClick(item.key, true)}
+                    className={`db-nav-item ${isActive ? 'db-nav-item--active' : ''} ${isOpen && !isActive ? 'db-nav-item--open' : ''}`}
+                    onClick={() => handleNavClick(item.key)}
                   >
                     <span className="material-symbols-outlined db-nav-item__icon">{item.icon}</span>
                     {item.label}
-                    <span className={`material-symbols-outlined db-nav-item__chevron ${isOpen ? 'db-nav-item__chevron--open' : ''}`}>
-                      expand_more
-                    </span>
+                    <span className={`material-symbols-outlined db-nav-item__chevron ${isOpen ? 'db-nav-item__chevron--open' : ''}`}>expand_more</span>
                   </button>
-
                   <div className={`db-submenu ${isOpen ? 'db-submenu--open' : ''}`}>
                     <div className="db-submenu-inner">
                       {hijosVisibles.map((child) => (
-                        <button
-                          key={child.key}
+                        <button key={child.key}
                           className={`db-sub-item ${activeNav === child.key ? 'db-sub-item--active' : ''}`}
-                          onClick={() => setActiveNav(child.key)}
-                        >
+                          onClick={() => navigate(`/${slug}/dashboard/${child.key}`)}>
                           <span className="material-symbols-outlined">{child.icon}</span>
                           {child.label}
                           {child.tag && <span className="db-sub-item__tag">{child.tag}</span>}
@@ -363,13 +406,10 @@ export const Dashboard = () => {
                 </div>
               )
             }
-
             return (
-              <button
-                key={item.key}
+              <button key={item.key}
                 className={`db-nav-item ${activeNav === item.key ? 'db-nav-item--active' : ''}`}
-                onClick={() => handleNavClick(item.key)}
-              >
+                onClick={() => handleNavClick(item.key)}>
                 <span className="material-symbols-outlined db-nav-item__icon">{item.icon}</span>
                 {item.label}
               </button>
@@ -379,12 +419,13 @@ export const Dashboard = () => {
 
         <div className="db-sidebar__footer">
           <div className="db-user-card">
-            <div className="db-user-card__avatar" style={{ background:`color-mix(in srgb, ${primary} 30%, #1e293b)` }}>
-              <span style={{ color:'#fff', fontSize:'.8rem', fontWeight:800 }}>
+            <div className="db-user-card__avatar" style={{ background: `color-mix(in srgb, ${primary} 30%, #1e293b)` }}>
+              <span style={{ color: '#fff', fontSize: '.8rem', fontWeight: 800 }}>
                 {userName?.charAt(0).toUpperCase() || 'U'}
               </span>
             </div>
-            <div style={{ overflow:'hidden' }}>
+            <div style={{ overflow: 'hidden', cursor: 'pointer' }}
+              onClick={() => navigate(`/${slug}/dashboard/perfil`)} title="Ver mi perfil">
               <p className="db-user-card__name">{userName || 'Usuario'}</p>
               <p className="db-user-card__role">{userRolNombre || 'Usuario'}</p>
             </div>
@@ -417,37 +458,41 @@ export const Dashboard = () => {
             <button className="db-header__icon-btn">
               <span className="material-symbols-outlined">help</span>
             </button>
+            <button className="db-header__icon-btn"
+              onClick={() => navigate(`/${slug}/pos`)} title="Punto de Venta"
+              style={{ background: 'var(--c-primary-10)', color: 'var(--c-primary)' }}>
+              <span className="material-symbols-outlined">point_of_sale</span>
+            </button>
           </div>
         </header>
 
         <div className="db-content">
 
-          {/* ── Personalización ── */}
-          {activeNav === 'empresa/personalizacion' && (
-            puedeVer('empresa.personalizacion.ver')
-              ? <Personalizacion
-                  currentLogo={branding.logo}
-                  currentNombre={branding.nombre}
-                  currentColors={branding.colors}
-                  slug={slug ?? ''}
-                  onBrandingUpdated={handleBrandingUpdated}
-                />
-              : <AccesoDenegado />
-          )}
+          {/* ── Empresa ── */}
+          {activeNav === 'empresa/personalizacion' && (puedeVer('empresa.personalizacion.ver') ? <Personalizacion currentLogo={branding.logo} currentNombre={branding.nombre} currentColors={branding.colors} slug={slug ?? ''} onBrandingUpdated={handleBrandingUpdated} /> : <AccesoDenegado />)}
+          {activeNav === 'empresa/roles'           && (puedeVer('empresa.roles.ver')           ? <RolesPanel />   : <AccesoDenegado />)}
+          {activeNav === 'empresa/info'            && (puedeVer('empresa.info.ver')            ? <PlaceholderPage title="Información general" icon="info"        /> : <AccesoDenegado />)}
+          {activeNav === 'empresa/usuarios'        && (puedeVer('empresa.usuarios.ver')        ? <UsuariosPanel /> : <AccesoDenegado />)}
+          {activeNav === 'empresa/facturacion'     && (puedeVer('empresa.facturacion.ver')     ? <PlaceholderPage title="Facturación y plan"  icon="credit_card" /> : <AccesoDenegado />)}
+          {activeNav === 'empresa/parametrizacion' && (puedeVer('empresa.personalizacion.ver') ? <ParametrizacionPanel /> : <AccesoDenegado />)}
 
-          {/* ── Control de Roles ── */}
-          {activeNav === 'empresa/roles' && (
-            puedeVer('empresa.roles.ver') ? <RolesPanel /> : <AccesoDenegado />
-          )}
+          {/* ── Inventario ──
+              onMutacion = forzarRecargarInventario:
+                - Resetea el cooldown a 0
+                - Recarga inmediatamente
+                - La próxima vez que entres al inventario (incluso desde otra sección) también recargará
+              Esto cubre el caso de volver de parametrización: el cooldown habrá expirado (>30s)
+              y al entrar a inventario/productos se disparará cargarInventario automáticamente
+          ── */}
+          {activeNav === 'inventario/productos'  && (puedeVer('inventario.productos.ver')        ? <InventarioPanel tab="productos"  datos={invData} loading={loadingInv} onMutacion={forzarRecargarInventario} /> : <AccesoDenegado />)}
+          {activeNav === 'inventario/categorias' && (puedeVer('inventario.categorias.gestionar') ? <InventarioPanel tab="categorias" datos={invData} loading={loadingInv} onMutacion={forzarRecargarInventario} /> : <AccesoDenegado />)}
+          {activeNav === 'inventario/bodegas'    && (puedeVer('inventario.bodegas.gestionar')    ? <InventarioPanel tab="bodegas"    datos={invData} loading={loadingInv} onMutacion={forzarRecargarInventario} /> : <AccesoDenegado />)}
 
-          {/* ── Placeholders ── */}
-          {activeNav === 'empresa/info'     && (puedeVer('empresa.info.ver')           ? <PlaceholderPage title="Información general" icon="info"        /> : <AccesoDenegado />)}
-          {activeNav === 'empresa/usuarios' && (puedeVer('empresa.usuarios.ver')       ? <UsuariosPanel />                                                 : <AccesoDenegado />)}
-          {activeNav === 'empresa/facturacion' && (puedeVer('empresa.facturacion.ver') ? <PlaceholderPage title="Facturación y plan" icon="credit_card" /> : <AccesoDenegado />)}
-          {activeNav === 'inventario'  && (puedeVer('inventario.ver')  ? <PlaceholderPage title="Inventario"  icon="inventory_2"  /> : <AccesoDenegado />)}
+          {/* ── Otros ── */}
           {activeNav === 'contratos'   && (puedeVer('contratos.ver')   ? <PlaceholderPage title="Contratos"   icon="description"  /> : <AccesoDenegado />)}
           {activeNav === 'facturacion' && (puedeVer('facturacion.ver') ? <PlaceholderPage title="Facturación" icon="receipt_long" /> : <AccesoDenegado />)}
           {activeNav === 'reportes'    && (puedeVer('reportes.ver')    ? <PlaceholderPage title="Reportes"    icon="bar_chart"    /> : <AccesoDenegado />)}
+          {activeNav === 'perfil' && <PerfilPanel />}
 
           {/* ── Panel Principal ── */}
           {activeNav === 'dashboard' && (<>
@@ -455,84 +500,82 @@ export const Dashboard = () => {
               <h1 className="db-page-title">Panel Principal</h1>
               <p className="db-page-sub">Resumen de actividad — {branding.nombre}</p>
             </div>
-
             <div className="db-kpi-grid">
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
                   <div><p className="db-kpi-card__label">Contratos Activos</p><p className="db-kpi-card__value">1,240</p></div>
-                  <div className="db-kpi-icon" style={{background:`color-mix(in srgb,${tertiary} 12%,transparent)`}}>
-                    <span className="material-symbols-outlined" style={{color:tertiary}}>description</span>
+                  <div className="db-kpi-icon" style={{ background: `color-mix(in srgb,${tertiary} 12%,transparent)` }}>
+                    <span className="material-symbols-outlined" style={{ color: tertiary }}>description</span>
                   </div>
                 </div>
                 <div className="db-kpi-footer">
-                  <span className="db-kpi-badge" style={{background:`color-mix(in srgb,${tertiary} 12%,transparent)`,color:tertiary}}>+12%</span>
+                  <span className="db-kpi-badge" style={{ background: `color-mix(in srgb,${tertiary} 12%,transparent)`, color: tertiary }}>+12%</span>
                   <div className="db-mini-bars">
-                    {[40,60,50,90].map((h,i)=><div key={i} className="db-mini-bar" style={{height:`${h}%`,background:i===3?tertiary:`color-mix(in srgb,${tertiary} 25%,transparent)`}}/>)}
+                    {[40,60,50,90].map((h,i) => <div key={i} className="db-mini-bar" style={{ height: `${h}%`, background: i===3 ? tertiary : `color-mix(in srgb,${tertiary} 25%,transparent)` }} />)}
                   </div>
                 </div>
               </div>
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
                   <div><p className="db-kpi-card__label">Facturas Pendientes</p><p className="db-kpi-card__value">48</p></div>
-                  <div className="db-kpi-icon" style={{background:`color-mix(in srgb,${primary} 12%,transparent)`}}>
-                    <span className="material-symbols-outlined" style={{color:primary}}>pending_actions</span>
+                  <div className="db-kpi-icon" style={{ background: `color-mix(in srgb,${primary} 12%,transparent)` }}>
+                    <span className="material-symbols-outlined" style={{ color: primary }}>pending_actions</span>
                   </div>
                 </div>
-                <div className="db-kpi-footer" style={{flexDirection:'column',alignItems:'stretch',gap:'.35rem'}}>
-                  <div className="db-mini-progress"><div className="db-mini-progress__fill" style={{width:'68%',background:primary}}/></div>
-                  <span style={{fontSize:'.72rem',fontWeight:700,color:primary}}>68% requieren atención</span>
+                <div className="db-kpi-footer" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '.35rem' }}>
+                  <div className="db-mini-progress"><div className="db-mini-progress__fill" style={{ width: '68%', background: primary }} /></div>
+                  <span style={{ fontSize: '.72rem', fontWeight: 700, color: primary }}>68% requieren atención</span>
                 </div>
               </div>
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
                   <div><p className="db-kpi-card__label">Ingresos Mensuales</p><p className="db-kpi-card__value">$12,500</p></div>
-                  <div className="db-kpi-icon" style={{background:`color-mix(in srgb,${secondary} 12%,transparent)`}}>
-                    <span className="material-symbols-outlined" style={{color:secondary}}>payments</span>
+                  <div className="db-kpi-icon" style={{ background: `color-mix(in srgb,${secondary} 12%,transparent)` }}>
+                    <span className="material-symbols-outlined" style={{ color: secondary }}>payments</span>
                   </div>
                 </div>
                 <div className="db-kpi-footer">
                   <div className="db-mini-bars">
-                    {[30,70,50,100,60,80].map((h,i)=><div key={i} className="db-mini-bar" style={{height:`${h}%`,background:i===3?secondary:`color-mix(in srgb,${secondary} 35%,transparent)`}}/>)}
+                    {[30,70,50,100,60,80].map((h,i) => <div key={i} className="db-mini-bar" style={{ height: `${h}%`, background: i===3 ? secondary : `color-mix(in srgb,${secondary} 35%,transparent)` }} />)}
                   </div>
                 </div>
               </div>
               <div className="db-kpi-card">
                 <div className="db-kpi-card__top">
                   <div><p className="db-kpi-card__label">Tasa de Retención</p><p className="db-kpi-card__value">98%</p></div>
-                  <div style={{position:'relative',width:48,height:48}}>
-                    <svg viewBox="0 0 48 48" style={{width:'100%',height:'100%',transform:'rotate(-90deg)'}}>
-                      <circle cx="24" cy="24" r="20" fill="none" stroke="#f1f5f9" strokeWidth="4.5"/>
+                  <div style={{ position: 'relative', width: 48, height: 48 }}>
+                    <svg viewBox="0 0 48 48" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+                      <circle cx="24" cy="24" r="20" fill="none" stroke="#f1f5f9" strokeWidth="4.5" />
                       <circle cx="24" cy="24" r="20" fill="none" stroke={tertiary} strokeWidth="4.5"
-                        strokeDasharray={`${2*Math.PI*20}`} strokeDashoffset={`${2*Math.PI*20*.02}`} strokeLinecap="round"/>
+                        strokeDasharray={`${2*Math.PI*20}`} strokeDashoffset={`${2*Math.PI*20*.02}`} strokeLinecap="round" />
                     </svg>
-                    <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                      <span style={{fontSize:'.6rem',fontWeight:800,color:tertiary}}>98%</span>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ fontSize: '.6rem', fontWeight: 800, color: tertiary }}>98%</span>
                     </div>
                   </div>
                 </div>
-                <p style={{marginTop:'1.1rem',fontSize:'.73rem',color:'#94a3b8',fontWeight:500}}>+2.4% que el mes pasado</p>
+                <p style={{ marginTop: '1.1rem', fontSize: '.73rem', color: '#94a3b8', fontWeight: 500 }}>+2.4% que el mes pasado</p>
               </div>
             </div>
-
             <div className="db-two-col">
               <div className="db-card">
                 <div className="db-card__header">
                   <div><p className="db-card__title">Gestión de Contratos</p><p className="db-card__sub">Listado de actividades recientes</p></div>
                   <button className="db-card__action">Ver todos</button>
                 </div>
-                <div style={{overflowX:'auto'}}>
+                <div style={{ overflowX: 'auto' }}>
                   <table className="db-table">
-                    <thead><tr><th>Cliente</th><th>ID</th><th>Fecha</th><th>Monto</th><th style={{textAlign:'center'}}>Estado</th></tr></thead>
+                    <thead><tr><th>Cliente</th><th>ID</th><th>Fecha</th><th>Monto</th><th style={{ textAlign: 'center' }}>Estado</th></tr></thead>
                     <tbody>
-                      {MOCK_CONTRACTS.map(row=>{
-                        const ic=INITIALS_COLORS[row.color]; const st=STATUS_STYLES[row.status]
+                      {MOCK_CONTRACTS.map(row => {
+                        const ic = INITIALS_COLORS[row.color]; const st = STATUS_STYLES[row.status]
                         return (
                           <tr key={row.id}>
-                            <td><div className="db-table__client"><div className="db-table__initials" style={{background:ic.bg,color:ic.text}}>{row.initials}</div><span className="db-table__name">{row.client}</span></div></td>
+                            <td><div className="db-table__client"><div className="db-table__initials" style={{ background: ic.bg, color: ic.text }}>{row.initials}</div><span className="db-table__name">{row.client}</span></div></td>
                             <td><span className="db-table__id">{row.id}</span></td>
                             <td><span className="db-table__date">{row.date}</span></td>
                             <td><span className="db-table__amount">{row.amount}</span></td>
-                            <td style={{textAlign:'center'}}><span className="db-status-badge" style={{background:st.bg,color:st.text,borderColor:st.border}}>{row.status}</span></td>
+                            <td style={{ textAlign: 'center' }}><span className="db-status-badge" style={{ background: st.bg, color: st.text, borderColor: st.border }}>{row.status}</span></td>
                           </tr>
                         )
                       })}
@@ -546,43 +589,36 @@ export const Dashboard = () => {
                   <div className="db-donut-wrap">
                     <div className="db-donut">
                       <svg viewBox="0 0 148 148">
-                        <circle cx="74" cy="74" r="58" fill="none" stroke="#f1f5f9" strokeWidth="18"/>
+                        <circle cx="74" cy="74" r="58" fill="none" stroke="#f1f5f9" strokeWidth="18" />
                         <circle cx="74" cy="74" r="58" fill="none" stroke={secondary} strokeWidth="18"
-                          strokeDasharray={`${2*Math.PI*58}`} strokeDashoffset={`${2*Math.PI*58*.25}`} strokeLinecap="round"/>
+                          strokeDasharray={`${2*Math.PI*58}`} strokeDashoffset={`${2*Math.PI*58*.25}`} strokeLinecap="round" />
                       </svg>
                       <div className="db-donut__center"><span className="db-donut__pct">75%</span><span className="db-donut__label">Cerradas</span></div>
                     </div>
                   </div>
                   <div className="db-billing-items">
-                    <div className="db-billing-item">
-                      <div className="db-billing-item__left"><div className="db-billing-dot" style={{background:secondary}}/><span className="db-billing-item__name">Facturas Cerradas</span></div>
-                      <span className="db-billing-item__amount">$45,200</span>
-                    </div>
-                    <div className="db-billing-item">
-                      <div className="db-billing-item__left"><div className="db-billing-dot" style={{background:primary}}/><span className="db-billing-item__name">Facturas Abiertas</span></div>
-                      <span className="db-billing-item__amount">$12,800</span>
-                    </div>
+                    <div className="db-billing-item"><div className="db-billing-item__left"><div className="db-billing-dot" style={{ background: secondary }} /><span className="db-billing-item__name">Facturas Cerradas</span></div><span className="db-billing-item__amount">$45,200</span></div>
+                    <div className="db-billing-item"><div className="db-billing-item__left"><div className="db-billing-dot" style={{ background: primary }} /><span className="db-billing-item__name">Facturas Abiertas</span></div><span className="db-billing-item__amount">$12,800</span></div>
                   </div>
                 </div>
               </div>
             </div>
-
             <div className="db-card">
               <div className="db-chart-header">
                 <div><p className="db-card__title">Flujo de Caja</p><p className="db-card__sub">Tendencia mensual de ingresos y egresos</p></div>
-                <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                   <div className="db-chart-legend">
-                    <div className="db-chart-legend-item"><div className="db-chart-legend-dot" style={{background:secondary}}/> Ingresos</div>
-                    <div className="db-chart-legend-item"><div className="db-chart-legend-dot" style={{background:`color-mix(in srgb,${primary} 45%,transparent)`}}/> Egresos</div>
+                    <div className="db-chart-legend-item"><div className="db-chart-legend-dot" style={{ background: secondary }} /> Ingresos</div>
+                    <div className="db-chart-legend-item"><div className="db-chart-legend-dot" style={{ background: `color-mix(in srgb,${primary} 45%,transparent)` }} /> Egresos</div>
                   </div>
                   <select className="db-chart-select"><option>Últimos 8 meses</option><option>Últimos 12 meses</option></select>
                 </div>
               </div>
               <div className="db-chart-body">
-                {[{month:'ENE',income:60,expense:38},{month:'FEB',income:73,expense:53},{month:'MAR',income:55,expense:33},{month:'ABR',income:80,expense:46},{month:'MAY',income:93,expense:27},{month:'JUN',income:87,expense:60},{month:'JUL',income:73,expense:40},{month:'AGO',income:67,expense:33}].map(col=>(
+                {[{month:'ENE',income:60,expense:38},{month:'FEB',income:73,expense:53},{month:'MAR',income:55,expense:33},{month:'ABR',income:80,expense:46},{month:'MAY',income:93,expense:27},{month:'JUN',income:87,expense:60},{month:'JUL',income:73,expense:40},{month:'AGO',income:67,expense:33}].map(col => (
                   <div key={col.month} className="db-chart-col">
-                    <div className="db-chart-bar" style={{height:`${col.expense}%`,background:`color-mix(in srgb,${primary} 35%,transparent)`}}/>
-                    <div className="db-chart-bar" style={{height:`${col.income}%`,background:secondary}}/>
+                    <div className="db-chart-bar" style={{ height: `${col.expense}%`, background: `color-mix(in srgb,${primary} 35%,transparent)` }} />
+                    <div className="db-chart-bar" style={{ height: `${col.income}%`, background: secondary }} />
                     <span className="db-chart-month">{col.month}</span>
                   </div>
                 ))}

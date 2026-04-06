@@ -65,8 +65,14 @@ export const CompletarRegistro = () => {
       const data = await res.json()
       if (!res.ok) throw new Error(data.message ?? 'Error al completar el registro.')
 
+      // Guardar el slug de la empresa en localStorage ANTES de redirigir
+      // para que LoginUsuario pueda cargar el branding sin necesidad del paso 1
+      const empresaSlug = data.empresa_slug ?? slug ?? ''
+      localStorage.setItem('empresa_slug', empresaSlug)
+
       setEstado('ok')
-      setTimeout(() => navigate(`/${slug}/login`), 3000)
+      // Redirigir al login de la empresa con el slug correcto
+      setTimeout(() => navigate(`/${empresaSlug}/login`), 2500)
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Error inesperado.')
       setEstado('listo')
@@ -118,7 +124,6 @@ export const CompletarRegistro = () => {
       `}</style>
 
       <div style={s.card}>
-        {/* Logo de la empresa */}
         {datos?.logo_url && (
           <div style={{textAlign:'center',marginBottom:'1.5rem'}}>
             <img src={datos.logo_url} alt={datos.empresa_nombre}
@@ -129,9 +134,7 @@ export const CompletarRegistro = () => {
 
         <div style={{marginBottom:'1.5rem'}}>
           <h1 style={s.titulo}>Completa tu perfil</h1>
-          <p style={{...s.sub, marginTop:'.3rem'}}>
-            Bienvenido. Configura tu cuenta para empezar.
-          </p>
+          <p style={{...s.sub, marginTop:'.3rem'}}>Bienvenido. Configura tu cuenta para empezar.</p>
           <p style={{fontSize:'.8rem',color:'#94a3b8',marginTop:'.25rem'}}>{datos?.email}</p>
         </div>
 
@@ -140,14 +143,12 @@ export const CompletarRegistro = () => {
             <div style={{flex:1}}>
               <label style={s.label}>Nombre *</label>
               <input className="cr-input" required value={form.name}
-                onChange={e => setForm({...form, name: e.target.value})}
-                placeholder="Tu nombre"/>
+                onChange={e => setForm({...form, name: e.target.value})} placeholder="Tu nombre"/>
             </div>
             <div style={{flex:1}}>
               <label style={s.label}>Apellido</label>
               <input className="cr-input" value={form.last_name}
-                onChange={e => setForm({...form, last_name: e.target.value})}
-                placeholder="Tu apellido"/>
+                onChange={e => setForm({...form, last_name: e.target.value})} placeholder="Tu apellido"/>
             </div>
           </div>
 
@@ -155,29 +156,25 @@ export const CompletarRegistro = () => {
             <div style={{flex:1}}>
               <label style={s.label}>Teléfono</label>
               <input className="cr-input" value={form.telefono}
-                onChange={e => setForm({...form, telefono: e.target.value})}
-                placeholder="3001234567"/>
+                onChange={e => setForm({...form, telefono: e.target.value})} placeholder="3001234567"/>
             </div>
             <div style={{flex:1}}>
               <label style={s.label}>Dirección</label>
               <input className="cr-input" value={form.direccion}
-                onChange={e => setForm({...form, direccion: e.target.value})}
-                placeholder="Tu dirección"/>
+                onChange={e => setForm({...form, direccion: e.target.value})} placeholder="Tu dirección"/>
             </div>
           </div>
 
           <div>
             <label style={s.label}>Nueva contraseña *</label>
             <input className="cr-input" type="password" required value={form.password}
-              onChange={e => setForm({...form, password: e.target.value})}
-              placeholder="Mínimo 8 caracteres"/>
+              onChange={e => setForm({...form, password: e.target.value})} placeholder="Mínimo 8 caracteres"/>
           </div>
 
           <div>
             <label style={s.label}>Confirmar contraseña *</label>
             <input className="cr-input" type="password" required value={form.password_confirmation}
-              onChange={e => setForm({...form, password_confirmation: e.target.value})}
-              placeholder="Repite tu contraseña"/>
+              onChange={e => setForm({...form, password_confirmation: e.target.value})} placeholder="Repite tu contraseña"/>
           </div>
 
           {errorMsg && (
@@ -187,13 +184,9 @@ export const CompletarRegistro = () => {
           )}
 
           <button type="submit" disabled={estado === 'enviando'}
-            style={{
-              padding:'.875rem', background:'#E3342F', color:'#fff',
-              border:'none', borderRadius:'10px', fontFamily:'inherit',
-              fontWeight:700, fontSize:'1rem', cursor:'pointer',
-              marginTop:'.25rem', opacity: estado === 'enviando' ? .6 : 1,
-              transition:'opacity .15s',
-            }}>
+            style={{padding:'.875rem',background:'#E3342F',color:'#fff',border:'none',borderRadius:'10px',
+              fontFamily:'inherit',fontWeight:700,fontSize:'1rem',cursor:'pointer',marginTop:'.25rem',
+              opacity:estado==='enviando'?.6:1,transition:'opacity .15s'}}>
             {estado === 'enviando' ? 'Guardando…' : 'Activar mi cuenta'}
           </button>
         </form>
